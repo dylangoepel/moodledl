@@ -58,8 +58,8 @@ class MoodleRepo():
         resp = urllib.request.urlopen(req)
         status = resp.getcode()
         if status != 200:
-            print(f"[-] http error response {status}", file=sys.stderr)
-            return []
+            print(f"[-] {nurl}\t{status}", file=sys.stderr)
+            return
         root = bs4.BeautifulSoup(resp.read(), features="lxml")
         for link in root.find_all("a"):
             m = modregex.match(link["href"])
@@ -98,6 +98,9 @@ class MoodleRepo():
         req = urllib.request.Request(url)
         req.add_header("Cookie", "MoodleSession=" + self.session)
         resp = urllib.request.urlopen(req)
+        if resp.getcode() != 200:
+            print(f"[-] {url}\t{resp.getcode()}", file=sys.stderr)
+            return []
         root = bs4.BeautifulSoup(resp.read(), features='lxml')
         for link in root.find_all("a"):
             if fileregex.match(link["href"]):
@@ -112,6 +115,9 @@ class MoodleRepo():
         req = urllib.request.Request(url)
         req.add_header("Cookie", "MoodleSession=" + self.session)
         resp = urllib.request.urlopen(req)
+        if resp.getcode() != 200:
+            print(f"[-] {url}\t{resp.getcode()}", file=sys.stderr)
+            return
         if not os.path.exists(os.path.dirname(path)):
             os.makedirs(os.path.dirname(path))
         with open(path, "wb") as f:
