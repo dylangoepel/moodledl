@@ -3,6 +3,7 @@ import bs4
 import os
 import regex
 import sys
+import multiprocessing
 
 def pathescape(p):
     forbidden = "()/:"
@@ -53,6 +54,7 @@ class MoodleRepo():
             courseid = int(m.group(2))
         req = urllib.request.Request(nurl)
         req.add_header("Cookie", "MoodleSession=" + self.session)
+        print(f"[*] {nurl}", file=sys.stderr)
         resp = urllib.request.urlopen(req)
         status = resp.getcode()
         if status != 200:
@@ -68,7 +70,6 @@ class MoodleRepo():
                 self.add_course(int(m.group(2)))
         if courseid != 0:
             title = root.find("h1")
-            print(f"[+] found course '{title.text}'", file=sys.stderr)
             self.names[courseid] = title.text
         if courseid != 0:
             self.loadedCourses.append(courseid)
@@ -92,14 +93,15 @@ class MoodleRepo():
     def load_resource(self, resource, dir):
         if resource in self.loadedResources:
             return []
-        req = urllib.request.Request(f"{self.baseurl}/mod/resource/view.php?id={resource}")
+        url = f"{self.baseurl}/mod/resource/view.php?id={resource}"
+        print(f"[*] {url}", file=sys.stderr)
+        req = urllib.request.Request(url)
         req.add_header("Cookie", "MoodleSession=" + self.session)
         resp = urllib.request.urlopen(req)
         root = bs4.BeautifulSoup(resp.read(), features='lxml')
         for link in root.find_all("a"):
             if fileregex.match(link["href"]):
                 path = dir + "/" + link["href"].split("/")[-1]
-                print(f"[+] found resource '{path}'", file=sys.stderr)
                 self.loadedResources.append(resource)
                 return [(link["href"], path)]
         return []
@@ -107,16 +109,20 @@ class MoodleRepo():
     def download(self, url, path):
         if os.path.exists(path):
             return
-        print(f"[+] downloading '{path}'...", file=sys.stderr)
         req = urllib.request.Request(url)
         req.add_header("Cookie", "MoodleSession=" + self.session)
         resp = urllib.request.urlopen(req)
+        if not os.path.exists(os.path.dirname(path)):
+            os.makedirs(os.path.dirname(path))
         with open(path, "wb") as f:
             f.write(resp.read())
+        print(f"[+] {url}\n\t({path})", file=sys.stderr)
+
+    def downloads(self, *xs):
+        for (url, path) in xs: self.download(url, path)
 
     def load_course_resources(self, course):
         if not course in self.names:
-            print(f"[-] no name for course with id {course}.", file=sys.stderr)
             return []
 
         if course not in self.courses:
@@ -127,23 +133,19 @@ class MoodleRepo():
             print(f"[-] no resources for {self.names[course]}", file=sys.stderr)
             return []
 
-        coursePath = self.names[course]
-        resources = []
-        for resource in self.courses[course]['resource']:
-            resources += self.load_resource(resource, coursePath)
-        return resources
+        return [y for x in self.courses[course]['resource']
+                    for y in self.load_resource(x, self.names[course])]
 
     def load_all_course_resources(self):
-        resources = []
-        for c in self.loadedCourses:
-            if c != 0:
-                resources += self.load_course_resources(c)
-        return resources
+        res = None
+        with multiprocessing.Pool(3) as p:
+            res = p.map(self.load_course_resources, self.loadedCourses)
+        return [y for x in res for y in x]
 
 repo = MoodleRepo(sys.argv[1].removesuffix("/"), sys.argv[2])
 repo.scrape("/my/")
 repo.load_all_courses()
-for (url, path) in repo.load_all_course_resources():
-    if not os.path.exists(os.path.dirname(path)):
-        os.makedirs(os.path.dirname(path))
-    repo.download(url, path)
+resources = repo.load_all_course_resources()
+
+with multiprocessing.Pool(3) as p:
+    p.map(repo.downloads, resources)
